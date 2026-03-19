@@ -2,7 +2,14 @@ from PyQt5.QtWidgets import QWidget, QApplication, QLabel
 from PyQt5.QtCore import Qt, QTimer, QRect
 from PyQt5.QtGui import QPainter, QColor, QMovie
 import os
+import sys
 import random
+
+def get_resource_path(relative_path):
+    """获取资源的绝对路径，兼容开发环境与 PyInstaller 打包环境"""
+    if hasattr(sys, '_MEIPASS'):
+        return os.path.join(sys._MEIPASS, relative_path)
+    return os.path.join(os.path.abspath(os.path.dirname(__file__)), relative_path)
 
 class GifWindow(QWidget):
     def __init__(self, parent_indicator):
@@ -25,7 +32,7 @@ class GifWindow(QWidget):
         self.label.setScaledContents(True)
         self.movie = None
         
-        self.gifs_dir = os.path.join(os.path.dirname(__file__), 'gifs')
+        self.gifs_dir = get_resource_path('gifs')
         
     def show_random_gif(self):
         if not os.path.exists(self.gifs_dir):

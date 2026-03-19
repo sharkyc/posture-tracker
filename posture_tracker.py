@@ -6,7 +6,14 @@ from mediapipe.tasks.python import vision
 import math
 from PyQt5.QtCore import QThread, pyqtSignal
 import os
+import sys
 import time
+
+def get_resource_path(relative_path):
+    """获取资源的绝对路径，兼容开发环境与 PyInstaller 打包环境"""
+    if hasattr(sys, '_MEIPASS'):
+        return os.path.join(sys._MEIPASS, relative_path)
+    return os.path.join(os.path.abspath(os.path.dirname(__file__)), relative_path)
 
 class PostureTracker(QThread):
     # Signals to communicate with the UI
@@ -21,7 +28,7 @@ class PostureTracker(QThread):
         self.baseline = None
         
         # Initialize MediaPipe Pose using Tasks API
-        model_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 'pose_landmarker_lite.task'))
+        model_path = get_resource_path('pose_landmarker_lite.task')
         print(f"Loading model from: {model_path}")
         
         # Load model data into memory first to avoid Windows path issues in MediaPipe C++ backend
