@@ -68,17 +68,25 @@ gifs_dir = get_resource_path('gifs')
 pip install pyinstaller
 ```
 
+*(注意：如果你所在的路径包含中文，比如 `D:\dev\py\坐直提醒`，PyInstaller 在处理 PyQt5 的插件目录时可能会抛出 `Exception: Qt plugin directory '.../????/...' does not exist!` 乱码错误。建议将项目目录移动到一个**纯英文路径**下再进行打包)*
+
 **执行打包命令：**
+
+建议使用默认的目录模式（即不加 `--onefile`），因为 MediaPipe 包含了大量的动态链接库和底层 C 模块。如果打包成单文件，会导致程序每次启动时需要解压大量文件，启动极慢。
+
 ```cmd
-pyinstaller --noconsole --onefile --add-data "pose_landmarker_lite.task;." --add-data "gifs;gifs" main.py
+pyinstaller --noconsole --add-data "pose_landmarker_lite.task;." --add-data "gifs;gifs" --exclude-module tensorflow --collect-all mediapipe main.py
 ```
 
 **参数说明：**
 - `--noconsole`: 运行时不显示黑色的 cmd 控制台窗口。
-- `--onefile`: 将所有依赖打包成一个单一的 `.exe` 文件。
 - `--add-data`: 附加资源文件。Windows 下格式为 `"源路径;目标目录"`（注意是用分号 `;` 分隔）。
+- `--exclude-module tensorflow`: 排除 TensorFlow 依赖（MediaPipe 包含一些可选依赖，如果不排除，PyInstaller 会将其误包含进去，导致打包极慢且包体巨大）。
+- `--collect-all mediapipe`: **(重要)** 强制收集 MediaPipe 库的所有隐藏子模块、二进制文件和数据。如果不加此参数，打包后的程序运行时会报 `ModuleNotFoundError: No module named 'mediapipe.tasks.c'` 错误。
 
-**产出：** 打包完成后，在 `dist/` 目录下会生成 `main.exe`。
+*(如果你必须打包为单文件，可以加上 `--onefile` 参数，但请做好程序每次启动都需要等待 10 秒以上的心理准备)*
+
+**产出：** 打包完成后，在 `dist/main/` 目录下会生成包含 `main.exe` 及其依赖的完整目录。将整个 `main` 文件夹发给别人，双击其中的 `main.exe` 即可运行。
 
 ### 3. macOS 平台打包方案
 
@@ -92,17 +100,18 @@ pip install pyinstaller
 
 **执行打包命令：**
 ```bash
-pyinstaller --noconsole --onefile --add-data "pose_landmarker_lite.task:." --add-data "gifs:gifs" main.py
+pyinstaller --noconsole --add-data "pose_landmarker_lite.task:." --add-data "gifs:gifs" --collect-all mediapipe main.py
 ```
 
 **参数说明：**
 - `--add-data`: macOS 和 Linux 下使用冒号 `:` 分隔源路径和目标路径。
+- `--collect-all mediapipe`: 解决 macOS 下同样的隐藏模块依赖问题。
 - 打包后会生成一个 UNIX 可执行文件，但在 macOS 上，若要更好的用户体验（如设置图标、权限请求），建议打包为 `.app` 格式。
 
 **打包为 macOS `.app` 包（推荐）：**
-去掉 `--onefile` 参数，使用窗口模式打包：
+使用窗口模式打包，并排除不必要的依赖：
 ```bash
-pyinstaller --windowed --add-data "pose_landmarker_lite.task:." --add-data "gifs:gifs" main.py
+pyinstaller --windowed --add-data "pose_landmarker_lite.task:." --add-data "gifs:gifs" --exclude-module tensorflow --collect-all mediapipe main.py
 ```
 这将在 `dist/` 目录下生成一个 `main.app`。
 
