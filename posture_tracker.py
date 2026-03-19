@@ -111,6 +111,14 @@ class PostureTracker(QThread):
         """Set the current score as the baseline (good posture)"""
         self.baseline = current_score
         
+    def reset_baseline(self):
+        """Reset baseline to None"""
+        self.baseline = None
+        
+    def set_baseline(self, score):
+        """Manually set baseline score"""
+        self.baseline = score
+        
     def stop(self):
         self.running = False
         self.wait()

@@ -1,0 +1,9 @@
+{
+    "reminder_mode": "indicator",
+    "baseline_score": 0.648999535592084,
+    "slouch_score": 0.30375679522024157,
+    "is_calibrated": true,
+    "dead_zone_ratio": 0.8244527182615481,
+    "max_slouch_ratio": 0.4680385401865094,
+    "is_slouch_calibrated": true
+}

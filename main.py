@@ -16,17 +16,22 @@ from posture_tracker import PostureTracker
 from overlay import BlurOverlay
 from camera_window import CameraWindow
 from indicator import IndicatorWindow
+from config_manager import ConfigManager
 
 class PostureApp:
     def __init__(self):
         self.app = QApplication(sys.argv)
         self.app.setQuitOnLastWindowClosed(False)
         
+        # Initialize Config Manager
+        self.config = ConfigManager()
+        
         # Initialize Overlay
         self.overlay = BlurOverlay()
         
         # Initialize Camera Window
         self.camera_window = CameraWindow()
+        self.camera_window.closed_signal.connect(self.on_camera_closed)
         # 默认不显示摄像头画面，如果需要默认显示可以改为 True
         self.is_camera_visible = False
         
@@ -42,10 +47,22 @@ class PostureApp:
         # App state
         self.latest_score = 0.0
         self.is_monitoring = True
-        self.reminder_mode = "blur" # "blur" or "indicator"
+        
+        # Load settings from config
+        self.reminder_mode = self.config.get("reminder_mode")
+        
+        # Load saved calibration if exists
+        self.is_calibrated = self.config.get("is_calibrated")
+        if self.is_calibrated:
+            baseline = self.config.get("baseline_score")
+            self.tracker.set_baseline(baseline)
         
         # Setup System Tray
         self.setup_tray()
+        
+        # Apply initial mode
+        if self.reminder_mode == "indicator":
+            self.indicator.show_indicator()
         
         # Start Tracker
         self.tracker.start()
@@ -79,8 +96,12 @@ class PostureApp:
         
         # Calibrate action
         self.calibrate_action = QAction("重新校准 (坐直并点击)")
-        self.calibrate_action.triggered.connect(self.calibrate)
+        self.calibrate_action.triggered.connect(self.calibrate_baseline)
         self.tray_menu.addAction(self.calibrate_action)
+        
+        self.calibrate_slouch_action = QAction("校准严重驼背姿态 (驼背并点击)")
+        self.calibrate_slouch_action.triggered.connect(self.calibrate_slouch)
+        self.tray_menu.addAction(self.calibrate_slouch_action)
         
         # Toggle monitoring
         self.toggle_action = QAction("暂停监控")
@@ -94,7 +115,6 @@ class PostureApp:
         self.mode_group = QActionGroup(self.app)
         
         self.mode_blur_action = QAction("全屏变暗", self.mode_menu, checkable=True)
-        self.mode_blur_action.setChecked(True)
         self.mode_blur_action.setData("blur")
         self.mode_group.addAction(self.mode_blur_action)
         self.mode_menu.addAction(self.mode_blur_action)
@@ -104,8 +124,21 @@ class PostureApp:
         self.mode_group.addAction(self.mode_indicator_action)
         self.mode_menu.addAction(self.mode_indicator_action)
         
+        # Check the current mode
+        if self.reminder_mode == "blur":
+            self.mode_blur_action.setChecked(True)
+        else:
+            self.mode_indicator_action.setChecked(True)
+            
         self.mode_group.triggered.connect(self.change_mode)
         self.tray_menu.addMenu(self.mode_menu)
+        
+        self.tray_menu.addSeparator()
+        
+        # Reset Action
+        self.reset_action = QAction("重置为默认设置")
+        self.reset_action.triggered.connect(self.reset_settings)
+        self.tray_menu.addAction(self.reset_action)
         
         self.tray_menu.addSeparator()
         
@@ -132,36 +165,114 @@ class PostureApp:
             3000
         )
 
-    def calibrate(self):
+    def calibrate_baseline(self):
         if self.latest_score > 0:
+            # Set baseline
             self.tracker.calibrate(self.latest_score)
+            
+            # Save to config
+            self.config.set("baseline_score", self.latest_score)
+            self.config.set("is_calibrated", True)
+            
+            # If we don't have a slouch calibration, reset ratio to default
+            if not self.config.get("is_slouch_calibrated"):
+                self.config.set("dead_zone_ratio", 0.90)
+                self.config.set("max_slouch_ratio", 0.70)
+            
             self.tray_icon.showMessage(
-                "校准完成",
-                "已记录当前坐姿，请保持。",
+                "标准坐姿校准完成",
+                "已记录当前坐姿为标准状态。",
                 QSystemTrayIcon.Information,
                 2000
             )
-            # Instantly clear blur or set indicator to green
-            if self.reminder_mode == "blur":
-                self.overlay.set_blur_level(0.0)
-            elif self.reminder_mode == "indicator":
-                self.indicator.update_status(0.0, False)
+            self._reset_feedback()
         else:
+            self._show_calibration_error()
+            
+    def calibrate_slouch(self):
+        if self.latest_score > 0:
+            baseline = self.config.get("baseline_score")
+            
+            # Ensure baseline exists and is valid (baseline should be higher than slouch score)
+            if not self.config.get("is_calibrated") or baseline <= self.latest_score:
+                self.tray_icon.showMessage(
+                    "校准失败",
+                    "请先校准标准坐姿，并确保驼背时的得分低于标准坐姿。",
+                    QSystemTrayIcon.Warning,
+                    3000
+                )
+                return
+            
+            # Calculate new ratios based on this slouch score
+            # Assume this calibrated slouch is the "max slouch" point (ratio = 1.0)
+            # Dead zone can be set to be 1/3 of the way from baseline to slouch
+            
+            diff = baseline - self.latest_score
+            max_slouch_ratio = self.latest_score / baseline
+            dead_zone_ratio = (baseline - (diff * 0.33)) / baseline
+            
+            self.config.set("slouch_score", self.latest_score)
+            self.config.set("dead_zone_ratio", dead_zone_ratio)
+            self.config.set("max_slouch_ratio", max_slouch_ratio)
+            self.config.set("is_slouch_calibrated", True)
+            
             self.tray_icon.showMessage(
-                "校准失败",
-                "未检测到人体姿态，请确保摄像头能看到您的肩膀和面部。",
-                QSystemTrayIcon.Warning,
-                3000
+                "严重驼背校准完成",
+                "已根据您的驼背程度调整了灵敏度。",
+                QSystemTrayIcon.Information,
+                2000
+            )
+        else:
+            self._show_calibration_error()
+            
+    def _show_calibration_error(self):
+        self.tray_icon.showMessage(
+            "校准失败",
+            "未检测到人体姿态，请确保摄像头能看到您的肩膀和面部。",
+            QSystemTrayIcon.Warning,
+            3000
+        )
+        
+    def _reset_feedback(self):
+        # Instantly clear blur or set indicator to green
+        if self.reminder_mode == "blur":
+            self.overlay.set_blur_level(0.0)
+        elif self.reminder_mode == "indicator":
+            self.indicator.update_status(0.0, False)
+
+    def reset_settings(self):
+        reply = QMessageBox.question(None, "确认重置", "确定要重置所有设置并清除校准数据吗？", QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            self.config.reset_to_defaults()
+            self.tracker.reset_baseline()
+            
+            # Reload settings
+            self.reminder_mode = self.config.get("reminder_mode")
+            self._reset_feedback()
+            self.change_mode_ui(self.reminder_mode)
+            
+            self.tray_icon.showMessage(
+                "已重置",
+                "所有设置已恢复默认。",
+                QSystemTrayIcon.Information,
+                2000
             )
 
     def change_mode(self, action):
-        self.reminder_mode = action.data()
-        if self.reminder_mode == "blur":
+        mode = action.data()
+        self.reminder_mode = mode
+        self.config.set("reminder_mode", mode)
+        self.change_mode_ui(mode)
+        
+    def change_mode_ui(self, mode):
+        if mode == "blur":
+            self.mode_blur_action.setChecked(True)
             self.indicator.hide_indicator()
             # If paused, ensure blur is off
             if not self.is_monitoring:
                 self.overlay.set_blur_level(0.0)
-        elif self.reminder_mode == "indicator":
+        elif mode == "indicator":
+            self.mode_indicator_action.setChecked(True)
             self.overlay.set_blur_level(0.0)
             if self.is_monitoring:
                 self.indicator.show_indicator()
@@ -191,6 +302,11 @@ class PostureApp:
             self.camera_action.setText("显示摄像头画面")
             self.camera_window.hide()
 
+    def on_camera_closed(self):
+        self.is_camera_visible = False
+        self.camera_action.setText("显示摄像头画面")
+        self.camera_window.hide()
+
     def handle_frame_update(self, rgb_image):
         if self.is_camera_visible:
             self.camera_window.update_frame(rgb_image)
@@ -208,10 +324,13 @@ class PostureApp:
             
         # Determine slouching level
         # Assuming baseline is higher (good posture), and current_score is lower (slouching)
-        # Dead zone: 10% drop
-        # Max slouch: 30% drop
-        dead_zone_score = baseline * 0.90
-        max_slouch_score = baseline * 0.70
+        
+        # Load thresholds from config (dynamically updated by calibration)
+        dead_zone_ratio = self.config.get("dead_zone_ratio")
+        max_slouch_ratio = self.config.get("max_slouch_ratio")
+        
+        dead_zone_score = baseline * dead_zone_ratio
+        max_slouch_score = baseline * max_slouch_ratio
         
         # Calculate ratio: 0.0 (good) to 1.0 (max slouch)
         if current_score >= dead_zone_score:
